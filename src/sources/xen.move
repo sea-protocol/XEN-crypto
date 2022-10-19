@@ -11,6 +11,7 @@
 /// 
 module xen::xen {
     use std::string;
+    use std::signer::address_of;
     use aptos_framework::block;
     use aptos_framework::coin::{Self, Coin};
     use aptos_std::table::{Self, Table};
@@ -103,7 +104,7 @@ module xen::xen {
             active_stakes: 0,
             total_xen_staked: 0,
             // user address => XEN mint info
-            user_mints: table::new<address, MintInfo>(),
+            // user_mints: table::new<address, MintInfo>(),
             // user address => XEN stake info
             // user_stakes: table::new<address, MintInfo>(),
             // user address => XEN burn amount
@@ -111,7 +112,6 @@ module xen::xen {
         });
     }
     
-
     // Public functions ====================================================
     public entry fun claim_rank() {
 
@@ -155,9 +155,9 @@ module xen::xen {
         term: u64,
         eaa: u64
     ): u64 {
-        let log128 = log_2(rank_delta);
+        let log128 = log2(rank_delta);
         let reward128 = log128 * amplifier * term * eaa;
-        return reward128 / 1000;
+        reward128 / 1000
     }
 
     /**
@@ -175,7 +175,7 @@ module xen::xen {
      */
     public entry fun get_user_stake(
         account: &signer,
-    ) (u64, u64, u64, u64, u64) acquires StakeInfo {
+    ): (u64, u64, u64, u64) acquires StakeInfo {
         let si = borrow_global<StakeInfo>(address_of(account));
         (si.apy, si.term, si.maturity_ts, si.amount)
     }
@@ -183,28 +183,28 @@ module xen::xen {
     /**
      * @dev returns current AMP
      */
-    public entry fun get_current_amp(): u64 {
+    public entry fun get_current_amp(): u64 acquires Dashboard {
         calculate_reward_amplifier()
     }
 
     /**
      * @dev returns current EAA Rate
      */
-    public entry fun get_current_eaar(): u64 {
+    public entry fun get_current_eaar(): u64 acquires Dashboard {
         calculate_eaa_rate()
     }
 
     /**
      * @dev returns current APY
      */
-    public entry fun get_current_apy(): u64 {
+    public entry fun get_current_apy(): u64 acquires Dashboard {
         calculate_apy()
     }
 
     /**
      * @dev returns current MaxTerm
      */
-    function get_current_max_term(): u64 {
+    fun get_current_max_term(): u64 acquires Dashboard {
         calc_max_term()
     }
 
@@ -234,7 +234,7 @@ module xen::xen {
      *      (if Global Rank crosses over TERM_AMPLIFIER_THRESHOLD)
      */
     fun calc_max_term(): u64 acquires Dashboard {
-        let dash = borrow_global_mut<Dashboard>(@xen);
+        let dash = borrow_global<Dashboard>(@xen);
         if (dash.global_rank > TERM_AMPLIFIER_THRESHOLD) {
             let delta = log2(dash.global_rank) * TERM_AMPLIFIER;
             let new_max = delta * SECONDS_IN_DAY + MAX_TERM_END;
