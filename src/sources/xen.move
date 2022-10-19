@@ -74,6 +74,7 @@ module xen::xen {
     const XEN_MIN_BURN:   u64 = 0;
     const XEN_APY_START:  u64 = 20;
     const XEN_APY_END:    u64 = 2;
+    const XEN_SCALE:      u64 = 100000000;
 
     const XEN_APY_DAYS_STEP:        u64 = 90;
     const MAX_PENALTY_PCT:          u64 = 99;
@@ -81,6 +82,20 @@ module xen::xen {
     const TERM_AMPLIFIER_THRESHOLD: u64 = 5000;
     const REWARD_AMPLIFIER_START:   u64 = 3000;
     const REWARD_AMPLIFIER_END:     u64 = 1;
+
+    // Errors ====================================================
+    const E_MIN_TERM:    u64 = 100;
+    const E_MAX_TERM:    u64 = 101;
+    const E_MINT_INFO_NOT_EXIST: u64 = 102;
+    const E_ALREADY_MINTED:      u64 = 103;
+    const E_MIN_STAKE: u64 = 104;
+    const E_ALREADY_STAKE: u64 = 105;
+    const E_NOT_ENOUGH_BALANCE: u64 = 106;
+    const E_NOT_MATURITY: u64 = 107;
+    const E_PERCENT_TOO_LARGE: u64 = 108;
+    const E_NOT_MINTED: u64 = 109;
+    const E_NOT_IMPLEMENT: u64 = 110;
+    
 
     // const AUTHORS: string = utf"XEN@seaprotocol";
 
@@ -98,7 +113,7 @@ module xen::xen {
             freeze_cap: freeze_cap,
         });
         move_to(sender, Dashboard {
-            genesis_ts: block::get_epoch_interval_secs(),
+            genesis_ts: get_timestamp(),
             global_rank: 0,
             active_minters: 0,
             active_stakes: 0,
@@ -113,28 +128,124 @@ module xen::xen {
     }
     
     // Public functions ====================================================
-    public entry fun claim_rank() {
 
+    /**
+     * @dev accepts User cRank claim provided all checks pass (incl. no current claim exists)
+     */
+    public entry fun claim_rank(
+        account: &signer,
+        term: u64,
+    ) acquires MintInfo, Dashboard {
+        let account_addr = address_of(account);
+        assert!(exists<MintInfo>(account_addr), E_MINT_INFO_NOT_EXIST);
+        let term_sec = term * SECONDS_IN_DAY;
+        assert!(term_sec > MIN_TERM, E_MIN_TERM);
+        assert!(term_sec < calc_max_term() + 1, E_MAX_TERM);
+
+        let mi = borrow_global_mut<MintInfo>(account_addr);
+        let dash = borrow_global_mut<Dashboard>(@xen);
+        assert!(mi.rank == 0, E_ALREADY_MINTED);
+        move_to(account, MintInfo{
+            user: account_addr,
+            term: term,
+            maturity_ts: get_timestamp() + term_sec,
+            rank: dash.global_rank,
+            amplifier: calculate_reward_amplifier(),
+            eaa_rate: calculate_eaa_rate(),
+        });
+        dash.active_minters = dash.active_minters + 1;
+        dash.global_rank  = dash.global_rank + 1;
+        // event
     }
 
-    public entry fun claim_mint_reward() {
+    /**
+     * @dev ends minting upon maturity (and within permitted Withdrawal Time Window), gets minted XEN
+     */
+    public entry fun claim_mint_reward(
+        account: &signer,
+    ) acquires MintInfo, Dashboard {
+        let account_addr = address_of(account);
+        let mi = borrow_global<MintInfo>(account_addr);
+        assert!(mi.rank > 0, E_NOT_MINTED);
 
+        assert!(get_timestamp() > mi.maturity_ts, E_NOT_MATURITY);
+        let reward_amount = calculate_mint_reward(
+            mi.rank,
+            mi.term,
+            mi.maturity_ts,
+            mi.amplifier,
+            mi.eaa_rate,
+        ) * XEN_SCALE;
+
+        cleanup_user_mint();
+        // TODO mint to user
     }
 
-    public entry fun claim_mint_reward_share() {
-
+    /**
+     * @dev  ends minting upon maturity (and within permitted Withdrawal time Window)
+     *       mints XEN coins and splits them between User and designated other address
+     */
+    public entry fun claim_mint_reward_share(
+        account: &signer,
+    ) {
+        assert!(false, E_NOT_IMPLEMENT);
     }
 
-    public entry fun claim_mint_reward_stake() {
+    public entry fun claim_mint_reward_stake(
+        account: &signer,
+        pct: u64,
+        term: u64,
+    ) acquires MintInfo, Dashboard {
+        let account_addr = address_of(account);
+        let mi = borrow_global_mut<MintInfo>(account_addr);
+        assert!(pct < 101, E_PERCENT_TOO_LARGE);
+        assert!(get_timestamp() > mi.maturity_ts, E_NOT_MATURITY);
 
+        let reward_amount = calculate_mint_reward(
+            mi.rank,
+            mi.term,
+            mi.maturity_ts,
+            mi.amplifier,
+            mi.eaa_rate,
+        ) * XEN_SCALE;
+        let staked_reward = (reward_amount * pct) / 100;
+        let own_reward = reward_amount - staked_reward;
+        // TODO
+        // mint reward tokens part
+        cleanup_user_mint();
+
+
+        // nothing to burn since we haven't minted this part yet
+        // stake extra tokens part
+        assert!(staked_reward > XEN_MIN_STAKE, E_MIN_STAKE);
+        assert!(term * SECONDS_IN_DAY > MIN_TERM, E_MIN_TERM);
+        assert!(term * SECONDS_IN_DAY < MAX_TERM_END + 1, E_MAX_TERM);
+        assert!(!exists<StakeInfo>(account_addr), E_ALREADY_STAKE);
+        create_stake(account, staked_reward, term);
+        // todo event
     }
 
-    public entry fun mint() {
+    /**
+     * @dev initiates XEN Stake in amount for a term (days)
+     */
+    public entry fun stake(
+        account: &signer,
+        amount: u64,
+        term: u64,
+    ) acquires Dashboard {
+        let account_addr = address_of(account);
+        assert!(coin::balance<XEN>(account_addr) >= amount, E_NOT_ENOUGH_BALANCE);
+        assert!(amount > XEN_MIN_STAKE, E_MIN_STAKE);
+        assert!(term * SECONDS_IN_DAY > MIN_TERM, E_MIN_TERM);
+        assert!(term * SECONDS_IN_DAY < MAX_TERM_END + 1, E_MAX_TERM);
+        assert!(!exists<StakeInfo>(account_addr), E_ALREADY_STAKE);
 
-    }
-
-    public entry fun stake() {
-
+        // burn staked XEN
+        _burn(_msgSender(), amount);
+        // create XEN Stake
+        create_stake(account, amount, term);
+        // todo event
+        // emit Staked(_msgSender(), amount, term);
     }
 
     public entry fun withdraw() {
@@ -217,6 +328,11 @@ module xen::xen {
         if (a < b) b else a
     }
 
+    // mint XEN to account
+    fun mint() {
+
+    }
+
     fun log2(a: u64): u64 {
         if (a == 0) {
             return 0
@@ -227,6 +343,10 @@ module xen::xen {
             l = l + 1;
         };
         l
+    }
+
+    fun get_timestamp(): u64 {
+        block::get_epoch_interval_secs()
     }
 
     /**
@@ -267,7 +387,7 @@ module xen::xen {
     ): u64 acquires Dashboard {
         let dash = borrow_global<Dashboard>(@xen);
 
-        let secs_late = block::get_epoch_interval_secs() - maturity_ts;
+        let secs_late = get_timestamp() - maturity_ts;
         let penalty = penalty(secs_late);
         let rank_delta = max(dash.global_rank - c_rank, 2);
         let eaa = (1000 + eea_rate);
@@ -292,7 +412,7 @@ module xen::xen {
         maturity_ts: u64,
         apy: u64,
     ): u64 {
-        if (block::get_epoch_interval_secs() > maturity_ts) {
+        if (get_timestamp() > maturity_ts) {
             let rate = (apy * term * 1000000) / DAYS_IN_YEAR;
             return (amount * rate) / 100000000
         };
@@ -305,7 +425,7 @@ module xen::xen {
     fun calculate_reward_amplifier(): u64 acquires Dashboard {
         let dash = borrow_global<Dashboard>(@xen);
 
-        let amplifier_decrease = (block::get_epoch_interval_secs() - dash.genesis_ts) / SECONDS_IN_DAY;
+        let amplifier_decrease = (get_timestamp() - dash.genesis_ts) / SECONDS_IN_DAY;
         if (amplifier_decrease < REWARD_AMPLIFIER_START) {
             return max(REWARD_AMPLIFIER_START - amplifier_decrease, REWARD_AMPLIFIER_END)
         } else {
@@ -331,7 +451,7 @@ module xen::xen {
      */
     fun calculate_apy(): u64 acquires Dashboard {
         let dash = borrow_global<Dashboard>(@xen);
-        let decrease = (block::get_epoch_interval_secs() - dash.genesis_ts) / (SECONDS_IN_DAY * XEN_APY_DAYS_STEP);
+        let decrease = (get_timestamp() - dash.genesis_ts) / (SECONDS_IN_DAY * XEN_APY_DAYS_STEP);
         if (XEN_APY_START - XEN_APY_END < decrease) return XEN_APY_END;
         return XEN_APY_START - decrease
     }
@@ -345,7 +465,7 @@ module xen::xen {
         term: u64) acquires Dashboard {
         move_to(account, StakeInfo{
             term: term,
-            maturity_ts: block::get_epoch_interval_secs() + term * SECONDS_IN_DAY,
+            maturity_ts: get_timestamp() + term * SECONDS_IN_DAY,
             amount: amount,
             apy: calculate_apy()
         });
