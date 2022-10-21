@@ -11,8 +11,9 @@
 /// 
 module xen::xen {
     use std::string;
+    use std::option;
     use std::signer::address_of;
-    use aptos_framework::block;
+    use aptos_framework::timestamp;
     use aptos_framework::coin;
     use aptos_framework::account;
     use aptos_std::table::{Self, Table};
@@ -58,6 +59,7 @@ module xen::xen {
         rank: u64,
         amplifier: u64,
         eaa_rate: u64,
+        post_1b: bool,
     }
 
     // INTERNAL TYPE TO DESCRIBE A XEN STAKE
@@ -95,9 +97,8 @@ module xen::xen {
         freeze_cap: coin::FreezeCapability<CoinType>,
     }
 
-
     // Constants ====================================================
-    const TIME_RATIO:     u64 = 3600;          // for test
+    const TIME_RATIO:     u64 = 60*12;          // for test
     const SECONDS_IN_DAY: u64 = 3600 * 24;
     const DAYS_IN_YEAR:   u64 = 365;
     const GENESIS_RANK:   u64 = 1;
@@ -112,14 +113,14 @@ module xen::xen {
     const XEN_MIN_BURN:   u64 = 0;
     const XEN_APY_START:  u64 = 20;
     const XEN_APY_END:    u64 = 2;
-    const XEN_SCALE:      u64 = 100000000;
+    const XEN_SCALE:      u64 = 10000;
 
     const XEN_APY_DAYS_STEP:        u64 = 90;
     const MAX_PENALTY_PCT:          u64 = 99;
     const WITHDRAWAL_WINDOW_DAYS:   u64 = 7;
     const TERM_AMPLIFIER_THRESHOLD: u64 = 5000;
-    const REWARD_AMPLIFIER_START:   u64 = 3000;
-    const REWARD_AMPLIFIER_END:     u64 = 1;
+    const REWARD_AMPLIFIER_START:   u64 = 2000; // 3000;
+    const REWARD_AMPLIFIER_END:     u64 = 100;  // 1
 
     // Errors ====================================================
     const E_MIN_TERM:    u64 = 100;
@@ -135,6 +136,7 @@ module xen::xen {
     const E_NOT_IMPLEMENT: u64 = 110;
     const E_NO_STAKE: u64 = 111;
     const E_MIN_BURN: u64 = 112;
+    const E_ALREADY_CLAIMED: u64 = 113;
     
 
     // const AUTHORS: string = utf"XEN@seaprotocol";
@@ -145,7 +147,7 @@ module xen::xen {
             sender,
             string::utf8(b"XEN"),
             string::utf8(b"XEN"),
-            8,
+            4,
             false,
         );
         move_to(sender, XENCapbility<XEN> {
@@ -166,6 +168,7 @@ module xen::xen {
             stake_events: account::new_event_handle<StakeEvent>(sender),
             withdraw_events: account::new_event_handle<WithdrawEvent>(sender),
         });
+        coin::register<XEN>(sender);
     }
     
     // Public functions ====================================================
@@ -188,6 +191,7 @@ module xen::xen {
         let term_sec = term * SECONDS_IN_DAY / TIME_RATIO;
         assert!(term_sec > MIN_TERM / TIME_RATIO, E_MIN_TERM);
         assert!(term_sec < calc_max_term() + 1, E_MAX_TERM);
+        let post_1b = xen_supply_reach_1b();
 
         // let mi = borrow_global_mut<MintInfo>(account_addr);
         let dash = borrow_global_mut<Dashboard>(@xen);
@@ -206,6 +210,7 @@ module xen::xen {
             rank: dash.global_rank,
             amplifier: calculate_reward_amplifier(),
             eaa_rate: calculate_eaa_rate(),
+            post_1b: post_1b,
         });
     }
 
@@ -216,8 +221,8 @@ module xen::xen {
         account: &signer,
     ) acquires MintInfo, Dashboard, XENCapbility {
         let account_addr = address_of(account);
-        let mi = borrow_global<MintInfo>(account_addr);
-        assert!(mi.rank > 0, E_NOT_MINTED);
+        let mi = borrow_global_mut<MintInfo>(account_addr);
+        assert!(mi.term > 0, E_ALREADY_CLAIMED);
 
         assert!(get_timestamp() > mi.maturity_ts, E_NOT_MATURITY);
         let reward_amount = calculate_mint_reward(
@@ -228,7 +233,7 @@ module xen::xen {
             mi.eaa_rate,
         ) * XEN_SCALE;
 
-        cleanup_user_mint();
+        cleanup_user_mint(mi);
         // mint to user
         mint_internal(account, account_addr, reward_amount);
         let dash = borrow_global_mut<Dashboard>(@xen);
@@ -236,16 +241,6 @@ module xen::xen {
             &mut dash.mint_claim_events,
             MintClaimEvent { user: account_addr, reward_amount: reward_amount },
         );
-    }
-
-    /**
-     * @dev  ends minting upon maturity (and within permitted Withdrawal time Window)
-     *       mints XEN coins and splits them between User and designated other address
-     */
-    public entry fun claim_mint_reward_share(
-        _account: &signer,
-    ) {
-        assert!(false, E_NOT_IMPLEMENT);
     }
 
     /**
@@ -259,6 +254,7 @@ module xen::xen {
     ) acquires MintInfo, Dashboard, XENCapbility {
         let account_addr = address_of(account);
         let mi = borrow_global_mut<MintInfo>(account_addr);
+        assert!(mi.term > 0, E_ALREADY_CLAIMED);
         assert!(pct < 101, E_PERCENT_TOO_LARGE);
         assert!(get_timestamp() > mi.maturity_ts, E_NOT_MATURITY);
 
@@ -274,7 +270,7 @@ module xen::xen {
         //
         // mint reward tokens part
         mint_internal(account, account_addr, own_reward);
-        cleanup_user_mint();
+        cleanup_user_mint(mi);
 
         // nothing to burn since we haven't minted this part yet
         // stake extra tokens part
@@ -379,41 +375,7 @@ module xen::xen {
     ): u64 {
         let log128 = log2(rank_delta);
         let reward128 = log128 * amplifier * term * eaa;
-        reward128 / 1000
-    }
-
-    /**
-     * @dev returns User Mint object associated with User account address
-     */
-    public entry fun get_user_mint(
-        account: &signer,
-    ): (u64, u64, u64, u64, u64) acquires MintInfo {
-        let mi = borrow_global<MintInfo>(address_of(account));
-        (mi.term, mi.maturity_ts, mi.rank, mi.amplifier, mi.eaa_rate)
-    }
-
-    /**
-     * @dev returns XEN Stake object associated with User account address
-     */
-    public entry fun get_user_stake(
-        account: &signer,
-    ): (u64, u64, u64, u64) acquires StakeInfo {
-        let si = borrow_global<StakeInfo>(address_of(account));
-        (si.apy, si.term, si.maturity_ts, si.amount)
-    }
-
-    /**
-     * @dev returns current AMP
-     */
-    public entry fun get_current_amp(): u64 acquires Dashboard {
-        calculate_reward_amplifier()
-    }
-
-    /**
-     * @dev returns current EAA Rate
-     */
-    public entry fun get_current_eaar(): u64 acquires Dashboard {
-        calculate_eaa_rate()
+        reward128
     }
 
     /**
@@ -423,13 +385,6 @@ module xen::xen {
         calculate_apy()
     }
 
-    /**
-     * @dev returns current MaxTerm
-     */
-    fun get_current_max_term(): u64 acquires Dashboard {
-        calc_max_term()
-    }
-
     // Private functions ====================================================
     fun min(a: u64, b: u64): u64 {
         if (a < b) a else b
@@ -437,6 +392,14 @@ module xen::xen {
 
     fun max(a: u64, b: u64): u64 {
         if (a < b) b else a
+    }
+
+    fun xen_supply_reach_1b(): bool {
+        let supply = coin::supply<XEN>();
+        if (option::is_some(&supply)) {
+            return *option::borrow(&supply) >= 1000000000
+        };
+        false
     }
 
     // mint XEN to account
@@ -474,7 +437,7 @@ module xen::xen {
     }
 
     fun get_timestamp(): u64 {
-        block::get_epoch_interval_secs()
+        timestamp::now_seconds()
     }
 
     /**
@@ -485,8 +448,8 @@ module xen::xen {
         let dash = borrow_global<Dashboard>(@xen);
         if (dash.global_rank > TERM_AMPLIFIER_THRESHOLD) {
             let delta = log2(dash.global_rank) * TERM_AMPLIFIER;
-            let new_max = delta * SECONDS_IN_DAY / TIME_RATIO + MAX_TERM_END;
-            return min(new_max, MAX_TERM_END)
+            let new_max = delta * SECONDS_IN_DAY / TIME_RATIO + MAX_TERM_END / TIME_RATIO;
+            return min(new_max, MAX_TERM_END / TIME_RATIO)
         };
 
         MAX_TERM_START / TIME_RATIO
@@ -520,15 +483,18 @@ module xen::xen {
         let rank_delta = max(dash.global_rank - c_rank, 2);
         let eaa = (1000 + eea_rate);
         let reward = get_gross_reward(rank_delta, amplifier, term, eaa);
-        return (reward * (100 - penalty)) / 100
+        // last 100 is decrease the ampl
+        return (reward * (100 - penalty)) / 1000 / 100 / 100
     }
 
     /**
      * @dev cleans up User Mint storage (gets some Gas credit;))
      */
-    fun cleanup_user_mint() acquires Dashboard {
+    fun cleanup_user_mint(mi: &mut MintInfo) acquires Dashboard {
         let dash = borrow_global_mut<Dashboard>(@xen);
         dash.active_minters = dash.active_minters - 1;
+
+        mi.term = 0;
     }
 
     /**
