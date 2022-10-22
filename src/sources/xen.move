@@ -124,6 +124,9 @@ module xen::xen {
     const REWARD_AMPLIFIER_END:     u64 = 100;  // 1
     const MAX_REWARD_CLAIM:         u64 = 220*1000*30; // 
 
+    const ONE_BILLION: u64 = 1000000000;
+    const TWO_BILLION: u64 = 2000000000;
+
     // Errors ====================================================
     const E_MIN_TERM:    u64 = 100;
     const E_MAX_TERM:    u64 = 101;
@@ -139,6 +142,7 @@ module xen::xen {
     const E_NO_STAKE: u64 = 111;
     const E_MIN_BURN: u64 = 112;
     const E_ALREADY_CLAIMED: u64 = 113;
+    const E_MAX_SUPPLY: u64 = 114;
     
 
     // const AUTHORS: string = utf"XEN@seaprotocol";
@@ -187,7 +191,9 @@ module xen::xen {
         let term_sec = term * SECONDS_IN_DAY / TIME_RATIO;
         assert!(term_sec > MIN_TERM / TIME_RATIO, E_MIN_TERM);
         assert!(term_sec < calc_max_term() + 1, E_MAX_TERM);
-        let post_1b = xen_supply_reach_1b();
+        let supply = xen_supply_reach_1b();
+        assert!(supply < TWO_BILLION * XEN_SCALE, E_MAX_SUPPLY);
+        let post_1b = supply >= ONE_BILLION * XEN_SCALE;
 
         // let mi = borrow_global_mut<MintInfo>(account_addr);
         let dash = borrow_global_mut<Dashboard>(@xen);
@@ -395,12 +401,12 @@ module xen::xen {
         if (a < b) b else a
     }
 
-    fun xen_supply_reach_1b(): bool {
+    fun xen_supply_reach_1b(): u64 {
         let supply = coin::supply<XEN>();
         if (option::is_some(&supply)) {
-            return *option::borrow(&supply) >= 1000000000
+            return ((*option::borrow(&supply) & 0xffffffffffffffff) as u64)
         };
-        false
+        0
     }
 
     // mint XEN to account
@@ -523,7 +529,7 @@ module xen::xen {
         let rank_delta = max(global_rank - c_rank, 2);
         let eaa = (1000 + eea_rate);
         let reward = get_gross_reward(rank_delta, amplifier, term, eaa, post_1b);
-        debug::print(&reward);
+        // debug::print(&reward);
         if (reward > MAX_REWARD_CLAIM * XEN_SCALE) {
             reward = MAX_REWARD_CLAIM * XEN_SCALE;
         };
