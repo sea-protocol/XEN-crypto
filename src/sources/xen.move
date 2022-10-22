@@ -94,7 +94,7 @@ module xen::xen {
     }
 
     // Constants ====================================================
-    const TIME_RATIO:     u64 = 60*24;          // for test: 1 minute
+    const TIME_RATIO:     u64 = 24;          // for test: 1 minute
     const SECONDS_IN_DAY: u64 = 3600 * 24;
     const DAYS_IN_YEAR:   u64 = 365;
     const GENESIS_RANK:   u64 = 1;
@@ -151,7 +151,7 @@ module xen::xen {
             string::utf8(b"XEN"),
             string::utf8(b"XEN"),
             4,
-            false,
+            true,
         );
         coin::destroy_freeze_cap<XEN>(freeze_cap);
         move_to(sender, XENCapbility<XEN> {
