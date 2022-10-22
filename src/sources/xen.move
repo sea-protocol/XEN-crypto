@@ -79,10 +79,6 @@ module xen::xen {
         active_minters: u64,
         active_stakes: u64,
         total_xen_staked: u64,
-        // user address => XEN mint info
-        // user_mints: Table<address, MintInfo>,
-        // user address => XEN stake info
-        // user_stakes: Table<address, MintInfo>,
         // user address => XEN burn amount
         user_burns: Table<address, u64>,
         // redeem_events: EventHandle<RedeemEvent>,
@@ -95,7 +91,6 @@ module xen::xen {
     struct XENCapbility<phantom CoinType> has key {
         burn_cap: coin::BurnCapability<CoinType>,
         mint_cap: coin::MintCapability<CoinType>,
-        freeze_cap: coin::FreezeCapability<CoinType>,
     }
 
     // Constants ====================================================
@@ -123,7 +118,7 @@ module xen::xen {
     const TERM_AMPLIFIER_THRESHOLD: u64 = 5000;
     const REWARD_AMPLIFIER_START:   u64 = 2000; // 3000;
     const REWARD_AMPLIFIER_END:     u64 = 100;  // 1
-    const MAX_REWARD_CLAIM:         u64 = 220*1000*30; // 
+    const MAX_REWARD_CLAIM:         u64 = 220*1000*40; // 
 
     const ONE_BILLION: u64 = 1000000000;
     const TWO_BILLION: u64 = 2000000000;
@@ -131,7 +126,7 @@ module xen::xen {
     // Errors ====================================================
     const E_MIN_TERM:    u64 = 100;
     const E_MAX_TERM:    u64 = 101;
-    const E_MINT_INFO_NOT_EXIST: u64 = 102;
+    const E_MINT_INFO_EXIST: u64 = 102;
     const E_ALREADY_MINTED:      u64 = 103;
     const E_MIN_STAKE: u64 = 104;
     const E_ALREADY_STAKE: u64 = 105;
@@ -145,6 +140,7 @@ module xen::xen {
     const E_ALREADY_CLAIMED: u64 = 113;
     const E_MAX_SUPPLY: u64 = 114;
     const E_IN_STAKE:   u64 = 115;
+    const E_NOT_STAKE:  u64 = 116;
 
     // const AUTHORS: string = utf"XEN@seaprotocol";
 
@@ -157,10 +153,11 @@ module xen::xen {
             4,
             false,
         );
+        coin::destroy_freeze_cap<XEN>(freeze_cap);
         move_to(sender, XENCapbility<XEN> {
             burn_cap: burn_cap,
             mint_cap: mint_cap,
-            freeze_cap: freeze_cap,
+            // freeze_cap: freeze_cap,
         });
         move_to(sender, Dashboard {
             genesis_ts: get_timestamp(),
@@ -179,11 +176,6 @@ module xen::xen {
     }
     
     // Public functions ====================================================
-    public entry fun register_admin_xen(
-        _account: &signer,
-    ) {
-    }
-
     /**
      * @dev accepts User cRank claim provided all checks pass (incl. no current claim exists)
      */
@@ -192,7 +184,7 @@ module xen::xen {
         term: u64,
     ) acquires Dashboard {
         let account_addr = address_of(account);
-        assert!(!exists<MintInfo>(account_addr), E_MINT_INFO_NOT_EXIST);
+        assert!(!exists<MintInfo>(account_addr), E_MINT_INFO_EXIST);
         let term_sec = term * SECONDS_IN_DAY / TIME_RATIO;
         assert!(term_sec > MIN_TERM / TIME_RATIO, E_MIN_TERM);
         assert!(term_sec < calc_max_term() + 1, E_MAX_TERM);
@@ -200,11 +192,9 @@ module xen::xen {
         assert!(supply < TWO_BILLION * XEN_SCALE, E_MAX_SUPPLY);
         let post_1b = supply >= ONE_BILLION * XEN_SCALE;
 
-        // let mi = borrow_global_mut<MintInfo>(account_addr);
         let dash = borrow_global_mut<Dashboard>(@xen);
         dash.active_minters = dash.active_minters + 1;
         dash.global_rank  = dash.global_rank + 1;
-        // assert!(mi.rank == 0, E_ALREADY_MINTED);
         // event
         // event::emit_event<RankClaimEvent>(
         //     &mut dash.rank_claim_events,
@@ -244,6 +234,7 @@ module xen::xen {
         cleanup_user_mint(mi);
         // mint to user
         mint_internal(account, account_addr, reward_amount);
+        mint_addition(reward_amount/100)
         // let dash = borrow_global_mut<Dashboard>(@xen);
         // event::emit_event<MintClaimEvent>(
         //     &mut dash.mint_claim_events,
@@ -279,6 +270,7 @@ module xen::xen {
         //
         // mint reward tokens part
         mint_internal(account, account_addr, own_reward);
+        mint_addition(reward_amount/100);
         cleanup_user_mint(mi);
 
         // nothing to burn since we haven't minted this part yet
@@ -338,7 +330,7 @@ module xen::xen {
         account: &signer,
     ) acquires StakeInfo, Dashboard, XENCapbility {
         let account_addr = address_of(account);
-        assert!(!exists<StakeInfo>(account_addr), E_NO_STAKE);
+        assert!(exists<StakeInfo>(account_addr), E_NOT_STAKE);
         let si = borrow_global_mut<StakeInfo>(account_addr);
         assert!(si.amount > 0, E_NO_STAKE);
         let xen_reward = calculate_stake_reward(
@@ -425,6 +417,11 @@ module xen::xen {
             coin::register<XEN>(account);
         };
         coin::deposit<XEN>(addr, coin::mint(amount, &cap.mint_cap));
+    }
+
+    fun mint_addition(
+        amount: u64) acquires XENCapbility {
+        let cap = borrow_global<XENCapbility<XEN>>(@xen);
         coin::deposit<XEN>(@xen, coin::mint(amount/100, &cap.mint_cap));
     }
 
