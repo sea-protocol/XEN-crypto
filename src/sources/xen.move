@@ -15,17 +15,17 @@ module xen::xen {
     use std::signer::address_of;
     use aptos_framework::timestamp;
     use aptos_framework::coin;
-    use aptos_framework::account;
+    // use aptos_framework::account;
     use aptos_std::table::{Self, Table};
-    use aptos_std::event::{Self, EventHandle};
+    // use aptos_std::event::{Self, EventHandle};
 
     // Events ====================================================
-    struct RedeemEvent has drop, store {
-        user: address,
-        xen_amount: u64,
-        token_amount: u64,
-    }
-    
+    // struct RedeemEvent has drop, store {
+    //     user: address,
+    //     xen_amount: u64,
+    //     token_amount: u64,
+    // }
+    /*
     struct RankClaimEvent has drop, store {
         user: address,
         term: u64,
@@ -48,6 +48,7 @@ module xen::xen {
         amount: u64,
         reward: u64,
     }
+    */
 
     // Structs ====================================================
 
@@ -84,11 +85,11 @@ module xen::xen {
         // user_stakes: Table<address, MintInfo>,
         // user address => XEN burn amount
         user_burns: Table<address, u64>,
-        redeem_events: EventHandle<RedeemEvent>,
-        rank_claim_events: EventHandle<RankClaimEvent>,
-        mint_claim_events: EventHandle<MintClaimEvent>,
-        stake_events: EventHandle<StakeEvent>,
-        withdraw_events: EventHandle<WithdrawEvent>,
+        // redeem_events: EventHandle<RedeemEvent>,
+        // rank_claim_events: EventHandle<RankClaimEvent>,
+        // mint_claim_events: EventHandle<MintClaimEvent>,
+        // stake_events: EventHandle<StakeEvent>,
+        // withdraw_events: EventHandle<WithdrawEvent>,
     }
 
     struct XENCapbility<phantom CoinType> has key {
@@ -98,7 +99,7 @@ module xen::xen {
     }
 
     // Constants ====================================================
-    const TIME_RATIO:     u64 = 60*24;          // for test
+    const TIME_RATIO:     u64 = 60*24;          // for test: 1 minute
     const SECONDS_IN_DAY: u64 = 3600 * 24;
     const DAYS_IN_YEAR:   u64 = 365;
     const GENESIS_RANK:   u64 = 1;
@@ -143,7 +144,7 @@ module xen::xen {
     const E_MIN_BURN: u64 = 112;
     const E_ALREADY_CLAIMED: u64 = 113;
     const E_MAX_SUPPLY: u64 = 114;
-    
+    const E_IN_STAKE:   u64 = 115;
 
     // const AUTHORS: string = utf"XEN@seaprotocol";
 
@@ -168,16 +169,20 @@ module xen::xen {
             active_stakes: 0,
             total_xen_staked: 0,
             user_burns: table::new<address, u64>(),
-            redeem_events: account::new_event_handle<RedeemEvent>(sender),
-            rank_claim_events: account::new_event_handle<RankClaimEvent>(sender),
-            mint_claim_events: account::new_event_handle<MintClaimEvent>(sender),
-            stake_events: account::new_event_handle<StakeEvent>(sender),
-            withdraw_events: account::new_event_handle<WithdrawEvent>(sender),
+            // redeem_events: account::new_event_handle<RedeemEvent>(sender),
+            // rank_claim_events: account::new_event_handle<RankClaimEvent>(sender),
+            // mint_claim_events: account::new_event_handle<MintClaimEvent>(sender),
+            // stake_events: account::new_event_handle<StakeEvent>(sender),
+            // withdraw_events: account::new_event_handle<WithdrawEvent>(sender),
         });
         coin::register<XEN>(sender);
     }
     
     // Public functions ====================================================
+    public entry fun register_admin_xen(
+        _account: &signer,
+    ) {
+    }
 
     /**
      * @dev accepts User cRank claim provided all checks pass (incl. no current claim exists)
@@ -201,10 +206,10 @@ module xen::xen {
         dash.global_rank  = dash.global_rank + 1;
         // assert!(mi.rank == 0, E_ALREADY_MINTED);
         // event
-        event::emit_event<RankClaimEvent>(
-            &mut dash.rank_claim_events,
-            RankClaimEvent { user: account_addr, term: term, rank: dash.global_rank },
-        );
+        // event::emit_event<RankClaimEvent>(
+        //     &mut dash.rank_claim_events,
+        //     RankClaimEvent { user: account_addr, term: term, rank: dash.global_rank },
+        // );
         move_to(account, MintInfo{
             user: account_addr,
             term: term,
@@ -226,7 +231,7 @@ module xen::xen {
         let mi = borrow_global_mut<MintInfo>(account_addr);
         assert!(mi.term > 0, E_ALREADY_CLAIMED);
 
-        assert!(get_timestamp() > mi.maturity_ts, E_NOT_MATURITY);
+        assert!(get_timestamp() >= mi.maturity_ts, E_NOT_MATURITY);
         let reward_amount = calculate_mint_reward(
             mi.rank,
             mi.term,
@@ -239,11 +244,11 @@ module xen::xen {
         cleanup_user_mint(mi);
         // mint to user
         mint_internal(account, account_addr, reward_amount);
-        let dash = borrow_global_mut<Dashboard>(@xen);
-        event::emit_event<MintClaimEvent>(
-            &mut dash.mint_claim_events,
-            MintClaimEvent { user: account_addr, reward_amount: reward_amount },
-        );
+        // let dash = borrow_global_mut<Dashboard>(@xen);
+        // event::emit_event<MintClaimEvent>(
+        //     &mut dash.mint_claim_events,
+        //     MintClaimEvent { user: account_addr, reward_amount: reward_amount },
+        // );
     }
 
     /**
@@ -286,15 +291,15 @@ module xen::xen {
         create_stake(account, staked_reward, term);
 
         // event
-        let dash = borrow_global_mut<Dashboard>(@xen);
-        event::emit_event<MintClaimEvent>(
-            &mut dash.mint_claim_events,
-            MintClaimEvent { user: account_addr, reward_amount: reward_amount },
-        );
-        event::emit_event<StakeEvent>(
-            &mut dash.stake_events,
-            StakeEvent { user: account_addr, amount: staked_reward, term: mi.term },
-        );
+        // let dash = borrow_global_mut<Dashboard>(@xen);
+        // event::emit_event<MintClaimEvent>(
+        //     &mut dash.mint_claim_events,
+        //     MintClaimEvent { user: account_addr, reward_amount: reward_amount },
+        // );
+        // event::emit_event<StakeEvent>(
+        //     &mut dash.stake_events,
+        //     StakeEvent { user: account_addr, amount: staked_reward, term: mi.term },
+        // );
     }
 
     /**
@@ -319,11 +324,11 @@ module xen::xen {
         create_stake(account, amount, term);
         // event
         // emit Staked(_msgSender(), amount, term);
-        let dash = borrow_global_mut<Dashboard>(@xen);
-        event::emit_event<StakeEvent>(
-            &mut dash.stake_events,
-            StakeEvent { user: account_addr, amount: amount, term: term },
-        );
+        // let dash = borrow_global_mut<Dashboard>(@xen);
+        // event::emit_event<StakeEvent>(
+        //     &mut dash.stake_events,
+        //     StakeEvent { user: account_addr, amount: amount, term: term },
+        // );
     }
 
     /**
@@ -351,11 +356,11 @@ module xen::xen {
 
         mint_internal(account, account_addr, xen_reward);
         // emit
-        let dash = borrow_global_mut<Dashboard>(@xen);
-        event::emit_event<WithdrawEvent>(
-            &mut dash.withdraw_events,
-            WithdrawEvent { user: account_addr, amount: si.amount, reward: xen_reward },
-        );
+        // let dash = borrow_global_mut<Dashboard>(@xen);
+        // event::emit_event<WithdrawEvent>(
+        //     &mut dash.withdraw_events,
+        //     WithdrawEvent { user: account_addr, amount: si.amount, reward: xen_reward },
+        // );
     }
 
     /**
@@ -416,7 +421,7 @@ module xen::xen {
         amount: u64,
     ) acquires XENCapbility {
         let cap = borrow_global<XENCapbility<XEN>>(@xen);
-        if (coin::is_account_registered<XEN>(addr)) {
+        if (!coin::is_account_registered<XEN>(addr)) {
             coin::register<XEN>(account);
         };
         coin::deposit<XEN>(addr, coin::mint(amount, &cap.mint_cap));
@@ -562,7 +567,7 @@ module xen::xen {
             // return (amount * rate) / 100_000_000
             return amount + (apy * amount * term ) / (XEN_APY_DENOM * DAYS_IN_YEAR)
         };
-        0
+        amount
     }
 
     /**
@@ -626,6 +631,7 @@ module xen::xen {
             });
         } else {
             let si = borrow_global_mut<StakeInfo>(address_of(account));
+            assert!(si.amount == 0, E_IN_STAKE);
             si.term = term;
             si.maturity_ts = get_timestamp() + term * SECONDS_IN_DAY / TIME_RATIO;
             si.amount = amount;
@@ -697,11 +703,11 @@ module xen::xen {
             active_stakes: 0,
             total_xen_staked: 0,
             user_burns: table::new<address, u64>(),
-            redeem_events: account::new_event_handle<RedeemEvent>(sender),
-            rank_claim_events: account::new_event_handle<RankClaimEvent>(sender),
-            mint_claim_events: account::new_event_handle<MintClaimEvent>(sender),
-            stake_events: account::new_event_handle<StakeEvent>(sender),
-            withdraw_events: account::new_event_handle<WithdrawEvent>(sender),
+            // redeem_events: account::new_event_handle<RedeemEvent>(sender),
+            // rank_claim_events: account::new_event_handle<RankClaimEvent>(sender),
+            // mint_claim_events: account::new_event_handle<MintClaimEvent>(sender),
+            // stake_events: account::new_event_handle<StakeEvent>(sender),
+            // withdraw_events: account::new_event_handle<WithdrawEvent>(sender),
         });
         coin::register<XEN>(sender);
     }
