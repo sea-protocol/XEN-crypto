@@ -98,7 +98,7 @@ module xen::xen {
     }
 
     // Constants ====================================================
-    const TIME_RATIO:     u64 = 60*12;          // for test
+    const TIME_RATIO:     u64 = 60*24;          // for test
     const SECONDS_IN_DAY: u64 = 3600 * 24;
     const DAYS_IN_YEAR:   u64 = 365;
     const GENESIS_RANK:   u64 = 1;
@@ -111,16 +111,18 @@ module xen::xen {
     const EAA_RANK_STEP:  u64 = 100000;
     const XEN_MIN_STAKE:  u64 = 0;
     const XEN_MIN_BURN:   u64 = 0;
-    const XEN_APY_START:  u64 = 20;
+    const XEN_APY_START:  u64 = 200;   // denominator 1000
     const XEN_APY_END:    u64 = 2;
+    const XEN_APY_DENOM:  u64 = 1000;
     const XEN_SCALE:      u64 = 10000;
 
-    const XEN_APY_DAYS_STEP:        u64 = 90;
+    const XEN_APY_DAYS_STEP:        u64 = 9;
     const MAX_PENALTY_PCT:          u64 = 99;
     const WITHDRAWAL_WINDOW_DAYS:   u64 = 7;
     const TERM_AMPLIFIER_THRESHOLD: u64 = 5000;
     const REWARD_AMPLIFIER_START:   u64 = 2000; // 3000;
     const REWARD_AMPLIFIER_END:     u64 = 100;  // 1
+    const MAX_REWARD_CLAIM:         u64 = 220*1000*30; // 
 
     // Errors ====================================================
     const E_MIN_TERM:    u64 = 100;
@@ -172,12 +174,6 @@ module xen::xen {
     }
     
     // Public functions ====================================================
-
-    public entry fun register_xen(
-        account: &signer
-    ) {
-        coin::register<XEN>(account);
-    }
 
     /**
      * @dev accepts User cRank claim provided all checks pass (incl. no current claim exists)
@@ -231,6 +227,7 @@ module xen::xen {
             mi.maturity_ts,
             mi.amplifier,
             mi.eaa_rate,
+            mi.post_1b,
         ) * XEN_SCALE;
 
         cleanup_user_mint(mi);
@@ -251,7 +248,7 @@ module xen::xen {
         account: &signer,
         pct: u64,
         term: u64,
-    ) acquires MintInfo, Dashboard, XENCapbility {
+    ) acquires MintInfo, Dashboard, XENCapbility, StakeInfo {
         let account_addr = address_of(account);
         let mi = borrow_global_mut<MintInfo>(account_addr);
         assert!(mi.term > 0, E_ALREADY_CLAIMED);
@@ -264,6 +261,7 @@ module xen::xen {
             mi.maturity_ts,
             mi.amplifier,
             mi.eaa_rate,
+            mi.post_1b,
         ) * XEN_SCALE;
         let staked_reward = (reward_amount * pct) / 100;
         let own_reward = reward_amount - staked_reward;
@@ -278,7 +276,9 @@ module xen::xen {
         assert!(term * SECONDS_IN_DAY > MIN_TERM, E_MIN_TERM);
         assert!(term * SECONDS_IN_DAY < MAX_TERM_END + 1, E_MAX_TERM);
         assert!(!exists<StakeInfo>(account_addr), E_ALREADY_STAKE);
+
         create_stake(account, staked_reward, term);
+
         // event
         let dash = borrow_global_mut<Dashboard>(@xen);
         event::emit_event<MintClaimEvent>(
@@ -298,13 +298,14 @@ module xen::xen {
         account: &signer,
         amount: u64,
         term: u64,
-    ) acquires Dashboard, XENCapbility {
+    ) acquires Dashboard, XENCapbility, StakeInfo {
         let account_addr = address_of(account);
         assert!(coin::balance<XEN>(account_addr) >= amount, E_NOT_ENOUGH_BALANCE);
         assert!(amount > XEN_MIN_STAKE, E_MIN_STAKE);
         assert!(term * SECONDS_IN_DAY > MIN_TERM, E_MIN_TERM);
         assert!(term * SECONDS_IN_DAY < MAX_TERM_END + 1, E_MAX_TERM);
-        assert!(!exists<StakeInfo>(account_addr), E_ALREADY_STAKE);
+
+        // assert!(!exists<StakeInfo>(account_addr), E_ALREADY_STAKE);
 
         // burn staked XEN
         burn_internal(account, amount);
@@ -328,9 +329,11 @@ module xen::xen {
         let account_addr = address_of(account);
         assert!(!exists<StakeInfo>(account_addr), E_NO_STAKE);
         let si = borrow_global_mut<StakeInfo>(account_addr);
+        assert!(si.amount > 0, E_NO_STAKE);
         let xen_reward = calculate_stake_reward(
             si.amount,
             si.term,
+            get_timestamp(),
             si.maturity_ts,
             si.apy,
         );
@@ -338,6 +341,7 @@ module xen::xen {
         let dash = borrow_global_mut<Dashboard>(@xen);
         dash.active_stakes = dash.active_stakes - 1;
         dash.total_xen_staked = dash.total_xen_staked - si.amount;
+        si.amount = 0;
 
         mint_internal(account, account_addr, xen_reward);
         // emit
@@ -371,18 +375,15 @@ module xen::xen {
         rank_delta: u64,
         amplifier: u64,
         term: u64,
-        eaa: u64
+        eaa: u64,
+        post_1b: bool,
     ): u64 {
-        let log128 = log2(rank_delta);
-        let reward128 = log128 * amplifier * term * eaa;
-        reward128
-    }
+        let log128 = if (post_1b) log10(rank_delta) else log2(rank_delta);
+        let reward128 = if (post_1b) {
+            log128 * 100 * term * eaa
+        } else { log128 * amplifier * term * eaa };
 
-    /**
-     * @dev returns current APY
-     */
-    public entry fun get_current_apy(): u64 acquires Dashboard {
-        calculate_apy()
+        reward128
     }
 
     // Private functions ====================================================
@@ -425,15 +426,27 @@ module xen::xen {
     }
 
     fun log2(a: u64): u64 {
-        if (a == 0) {
-            return 0
+        if (a <= 2) {
+            return 1
         };
         let l = 0;
         while (a > 0) {
             a = a>>1;
             l = l + 1;
         };
-        l
+        l-1
+    }
+
+    fun log10(a: u64): u64 {
+        if (a < 100) {
+            return 1
+        };
+        let l = 0;
+        while (a > 0) {
+            a = a/10;
+            l = l + 1;
+        };
+        l-1
     }
 
     fun get_timestamp(): u64 {
@@ -446,9 +459,14 @@ module xen::xen {
      */
     fun calc_max_term(): u64 acquires Dashboard {
         let dash = borrow_global<Dashboard>(@xen);
-        if (dash.global_rank > TERM_AMPLIFIER_THRESHOLD) {
-            let delta = log2(dash.global_rank) * TERM_AMPLIFIER;
-            let new_max = delta * SECONDS_IN_DAY / TIME_RATIO + MAX_TERM_END / TIME_RATIO;
+
+        calc_max_term_pure(dash.global_rank)
+    }
+
+    fun calc_max_term_pure(global_rank: u64): u64 {
+        if (global_rank > TERM_AMPLIFIER_THRESHOLD) {
+            let delta = log2(global_rank) * TERM_AMPLIFIER;
+            let new_max = delta * SECONDS_IN_DAY / TIME_RATIO;
             return min(new_max, MAX_TERM_END / TIME_RATIO)
         };
 
@@ -474,15 +492,41 @@ module xen::xen {
         term: u64,
         maturity_ts: u64,
         amplifier: u64,
-        eea_rate: u64
+        eea_rate: u64,
+        post_1b: bool,
     ): u64 acquires Dashboard {
         let dash = borrow_global<Dashboard>(@xen);
+        let now_ts = get_timestamp();
 
-        let secs_late = get_timestamp() - maturity_ts;
+        calc_mint_reward_pure(dash.global_rank,
+            c_rank,
+            term,
+            now_ts,
+            maturity_ts,
+            amplifier,
+            eea_rate,
+            post_1b
+        )
+    }
+
+    fun calc_mint_reward_pure(
+        global_rank: u64,
+        c_rank: u64,
+        term: u64,
+        now_ts: u64,
+        maturity_ts: u64,
+        amplifier: u64,
+        eea_rate: u64,
+        post_1b: bool): u64 {
+        let secs_late = now_ts - maturity_ts;
         let penalty = penalty(secs_late);
-        let rank_delta = max(dash.global_rank - c_rank, 2);
+        let rank_delta = max(global_rank - c_rank, 2);
         let eaa = (1000 + eea_rate);
-        let reward = get_gross_reward(rank_delta, amplifier, term, eaa);
+        let reward = get_gross_reward(rank_delta, amplifier, term, eaa, post_1b);
+        debug::print(&reward);
+        if (reward > MAX_REWARD_CLAIM * XEN_SCALE) {
+            reward = MAX_REWARD_CLAIM * XEN_SCALE;
+        };
         // last 100 is decrease the ampl
         return (reward * (100 - penalty)) / 1000 / 100 / 100
     }
@@ -503,12 +547,14 @@ module xen::xen {
     fun calculate_stake_reward(
         amount: u64,
         term: u64,
+        now_ts: u64,
         maturity_ts: u64,
         apy: u64,
     ): u64 {
-        if (get_timestamp() > maturity_ts) {
-            let rate = (apy * term * 1000000) / DAYS_IN_YEAR;
-            return (amount * rate) / 100000000
+        if (now_ts >= maturity_ts) {
+            // let rate = (apy * term * 1000_000) / DAYS_IN_YEAR;
+            // return (amount * rate) / 100_000_000
+            return amount + (apy * amount * term ) / (XEN_APY_DENOM * DAYS_IN_YEAR)
         };
         0
     }
@@ -545,9 +591,17 @@ module xen::xen {
      */
     fun calculate_apy(): u64 acquires Dashboard {
         let dash = borrow_global<Dashboard>(@xen);
-        let decrease = (get_timestamp() - dash.genesis_ts) / (SECONDS_IN_DAY / TIME_RATIO * XEN_APY_DAYS_STEP);
-        if (XEN_APY_START - XEN_APY_END < decrease) return XEN_APY_END;
-        return XEN_APY_START - decrease
+        cacl_apy_pure(get_timestamp(), dash.genesis_ts)
+    }
+
+    fun cacl_apy_pure(
+        now_ts: u64,
+        genesis_ts: u64,
+    ): u64 {
+        let decrease = (now_ts - genesis_ts) * 2 / (SECONDS_IN_DAY / TIME_RATIO * XEN_APY_DAYS_STEP);
+        let apy = if (XEN_APY_START - XEN_APY_END < decrease) XEN_APY_END else XEN_APY_START - decrease;
+
+        apy
     }
 
     /**
@@ -556,16 +610,143 @@ module xen::xen {
     fun create_stake(
         account: &signer,
         amount: u64,
-        term: u64) acquires Dashboard {
-        move_to(account, StakeInfo{
-            term: term,
-            maturity_ts: get_timestamp() + term * SECONDS_IN_DAY / TIME_RATIO,
-            amount: amount,
-            apy: calculate_apy()
-        });
+        term: u64) acquires Dashboard, StakeInfo {
+        if (!exists<StakeInfo>(address_of(account))) {
+            move_to(account, StakeInfo{
+                term: term,
+                maturity_ts: get_timestamp() + term * SECONDS_IN_DAY / TIME_RATIO,
+                amount: amount,
+                apy: calculate_apy()
+            });
+        } else {
+            let si = borrow_global_mut<StakeInfo>(address_of(account));
+            si.term = term;
+            si.maturity_ts = get_timestamp() + term * SECONDS_IN_DAY / TIME_RATIO;
+            si.amount = amount;
+            si.apy = calculate_apy();
+        };
+
         let dash = borrow_global_mut<Dashboard>(@xen);
         dash.active_stakes = dash.active_stakes + 1;
         dash.total_xen_staked = dash.total_xen_staked + amount;
     }
 
+    #[test_only]
+    use std::debug;
+
+    #[test]
+    fun test_log2() {
+        assert!(log2(2) == 1, 2);
+        assert!(log2(3) == 1, 3);
+        assert!(log2(4) == 2, 4);
+        assert!(log2(5) == 2, 5);
+        assert!(log2(6) == 2, 5);
+        assert!(log2(7) == 2, 5);
+        assert!(log2(8) == 3, 5);
+    }
+
+    #[test]
+    fun test_log10() {
+        assert!(log10(2) == 1, 2);
+        assert!(log10(7) == 1, 3);
+        assert!(log10(10) == 1, 3);
+        assert!(log10(12) == 1, 3);
+        assert!(log10(90) == 1, 3);
+        assert!(log10(100) == 2, 3);
+        assert!(log10(200) == 2, 3);
+        assert!(log10(300) == 2, 3);
+        assert!(log10(1000) == 3, 3);
+        assert!(log10(3000) == 3, 3);
+    }
+
+    #[test]
+    fun test_calc_max_term() {
+        debug::print(&(calc_max_term_pure(1)*TERM_AMPLIFIER/TIME_RATIO));
+        debug::print(&(calc_max_term_pure(10)*TERM_AMPLIFIER/TIME_RATIO));
+        debug::print(&(calc_max_term_pure(5000)*TERM_AMPLIFIER/TIME_RATIO));
+        debug::print(&(calc_max_term_pure(5005)*TERM_AMPLIFIER/TIME_RATIO));
+        debug::print(&(calc_max_term_pure(500500)*TERM_AMPLIFIER/TIME_RATIO));
+        debug::print(&(calc_max_term_pure(1500500)*TERM_AMPLIFIER/TIME_RATIO));
+        debug::print(&(calc_max_term_pure(15005000)*TERM_AMPLIFIER/TIME_RATIO));
+    }
+
+    #[test_only]
+    fun test_init_module(sender: &signer) {
+        let (burn_cap, freeze_cap, mint_cap) = coin::initialize<XEN>(
+            sender,
+            string::utf8(b"XEN"),
+            string::utf8(b"XEN"),
+            4,
+            false,
+        );
+        move_to(sender, XENCapbility<XEN> {
+            burn_cap: burn_cap,
+            mint_cap: mint_cap,
+            freeze_cap: freeze_cap,
+        });
+        move_to(sender, Dashboard {
+            genesis_ts: 0,
+            global_rank: 0,
+            active_minters: 0,
+            active_stakes: 0,
+            total_xen_staked: 0,
+            user_burns: table::new<address, u64>(),
+            redeem_events: account::new_event_handle<RedeemEvent>(sender),
+            rank_claim_events: account::new_event_handle<RankClaimEvent>(sender),
+            mint_claim_events: account::new_event_handle<MintClaimEvent>(sender),
+            stake_events: account::new_event_handle<StakeEvent>(sender),
+            withdraw_events: account::new_event_handle<WithdrawEvent>(sender),
+        });
+        coin::register<XEN>(sender);
+    }
+
+    #[test]
+    fun test_calculate_mint_reward() {
+        let reward: u64;
+        let global_rank = 10001;
+        let c_rank = 1;
+        let now_ts = 10;
+        let maturity_ts = 10;
+        let terms = 1;
+        let eaa_rate = 0;
+        let post_1b = false;
+        let amplifier = 2000;
+
+        reward = calc_mint_reward_pure(
+            global_rank,
+            c_rank,
+            terms,
+            now_ts,
+            maturity_ts,
+            amplifier,
+            eaa_rate,
+            post_1b,
+            );
+        debug::print(&reward);
+    }
+
+    #[test]
+    fun test_cacl_apy_pure() {
+        let now_ts = 102*60*9;
+        let genesis_ts = 0;
+        debug::print(&cacl_apy_pure(now_ts, genesis_ts));
+        now_ts = 101*60*9;
+        debug::print(&cacl_apy_pure(now_ts, genesis_ts));
+        now_ts = 100*60*9;
+        debug::print(&cacl_apy_pure(now_ts, genesis_ts));
+        now_ts = 99*60*9;
+        debug::print(&cacl_apy_pure(now_ts, genesis_ts));
+        now_ts = 50*60*9;
+        debug::print(&cacl_apy_pure(now_ts, genesis_ts));
+    }
+
+    #[test]
+    fun test_calculate_stake_reward() {
+        let amount: u64 = 100 * XEN_SCALE;
+        let term: u64 = 10;
+        let now_ts: u64 = 1;
+        let maturity_ts: u64 = 0;
+        let apy: u64 = 1010;
+        debug::print(&calculate_stake_reward(amount, term, now_ts, maturity_ts, apy));
+    }
 }
