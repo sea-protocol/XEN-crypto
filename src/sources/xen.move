@@ -188,7 +188,7 @@ module xen::xen {
         let term_sec = term * SECONDS_IN_DAY / TIME_RATIO;
         assert!(term_sec > MIN_TERM / TIME_RATIO, E_MIN_TERM);
         assert!(term_sec < calc_max_term() + 1, E_MAX_TERM);
-        let supply = xen_supply_reach_1b();
+        let supply = xen_supply();
         assert!(supply < TWO_BILLION * XEN_SCALE, E_MAX_SUPPLY);
         let post_1b = supply >= ONE_BILLION * XEN_SCALE;
 
@@ -278,7 +278,6 @@ module xen::xen {
         assert!(staked_reward > XEN_MIN_STAKE, E_MIN_STAKE);
         assert!(term * SECONDS_IN_DAY > MIN_TERM, E_MIN_TERM);
         assert!(term * SECONDS_IN_DAY < MAX_TERM_END + 1, E_MAX_TERM);
-        assert!(!exists<StakeInfo>(account_addr), E_ALREADY_STAKE);
 
         create_stake(account, staked_reward, term);
 
@@ -307,8 +306,6 @@ module xen::xen {
         assert!(amount > XEN_MIN_STAKE, E_MIN_STAKE);
         assert!(term * SECONDS_IN_DAY > MIN_TERM, E_MIN_TERM);
         assert!(term * SECONDS_IN_DAY < MAX_TERM_END + 1, E_MAX_TERM);
-
-        // assert!(!exists<StakeInfo>(account_addr), E_ALREADY_STAKE);
 
         // burn staked XEN
         burn_internal(account, amount);
@@ -398,7 +395,7 @@ module xen::xen {
         if (a < b) b else a
     }
 
-    fun xen_supply_reach_1b(): u64 {
+    fun xen_supply(): u64 {
         let supply = coin::supply<XEN>();
         if (option::is_some(&supply)) {
             return ((*option::borrow(&supply) & 0xffffffffffffffff) as u64)
@@ -531,7 +528,6 @@ module xen::xen {
         let rank_delta = max(global_rank - c_rank, 2);
         let eaa = (1000 + eea_rate);
         let reward = get_gross_reward(rank_delta, amplifier, term, eaa, post_1b);
-        // debug::print(&reward);
         if (reward > MAX_REWARD_CLAIM * XEN_SCALE) {
             reward = MAX_REWARD_CLAIM * XEN_SCALE;
         };
@@ -595,7 +591,7 @@ module xen::xen {
     }
 
     /**
-     * @dev calculates APY (in %)
+     * @dev calculates APY (in n/1000)
      */
     fun calculate_apy(): u64 acquires Dashboard {
         let dash = borrow_global<Dashboard>(@xen);
@@ -607,9 +603,7 @@ module xen::xen {
         genesis_ts: u64,
     ): u64 {
         let decrease = (now_ts - genesis_ts) * 2 / (SECONDS_IN_DAY / TIME_RATIO * XEN_APY_DAYS_STEP);
-        let apy = if (XEN_APY_START - XEN_APY_END < decrease) XEN_APY_END else XEN_APY_START - decrease;
-
-        apy
+        if (XEN_APY_START - XEN_APY_END < decrease) XEN_APY_END else XEN_APY_START - decrease
     }
 
     /**
@@ -666,6 +660,7 @@ module xen::xen {
         assert!(log10(300) == 2, 3);
         assert!(log10(1000) == 3, 3);
         assert!(log10(3000) == 3, 3);
+        assert!(log10(9000) == 3, 3);
     }
 
     #[test]
@@ -691,7 +686,6 @@ module xen::xen {
         move_to(sender, XENCapbility<XEN> {
             burn_cap: burn_cap,
             mint_cap: mint_cap,
-            freeze_cap: freeze_cap,
         });
         move_to(sender, Dashboard {
             genesis_ts: 0,
@@ -707,6 +701,7 @@ module xen::xen {
             // withdraw_events: account::new_event_handle<WithdrawEvent>(sender),
         });
         coin::register<XEN>(sender);
+        coin::destroy_freeze_cap(freeze_cap);
     }
 
     #[test]
