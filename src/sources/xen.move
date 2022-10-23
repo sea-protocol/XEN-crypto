@@ -592,7 +592,7 @@ module xen::xen {
 
         if (amplifier_decrease < REWARD_AMPLIFIER_START) {
             let term_ampl = max(REWARD_AMPLIFIER_START - amplifier_decrease, REWARD_AMPLIFIER_END);
-            let supply_decrease = supply / MILLION;
+            let supply_decrease = supply / (MILLION * XEN_SCALE);
             let supply_ampl = if (supply_decrease > REWARD_AMPLIFIER_START - REWARD_AMPLIFIER_END) {
                 REWARD_AMPLIFIER_END
             } else {
