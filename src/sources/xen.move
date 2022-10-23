@@ -203,6 +203,7 @@ module xen::xen {
         let mi = borrow_global_mut<MintInfo>(account_addr);
         assert!(mi.term > 0, E_ALREADY_CLAIMED);
         assert!(pct < 101, E_PERCENT_TOO_LARGE);
+        assert!(pct > 0, E_MIN_STAKE);
         assert!(get_timestamp() > mi.maturity_ts, E_NOT_MATURITY);
 
         let reward_amount = calculate_mint_reward(

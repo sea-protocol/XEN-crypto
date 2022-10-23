@@ -3,7 +3,7 @@ name = "xen"
 version = "0.1.0" # Per SemVer
 
 [addresses]
-xen = "9ed9f3d3bac4e121f17b6ce602714c0c34bfd3b9ab8ec5760252050648a53e48"
+xen = "ea4367c0eb7515fd6e450d611071f40e51a814c22eec26d41f34a394dc0ab698"
 
 [dependencies.AptosFramework]
 git = "https://github.com/aptos-labs/aptos-core.git"
