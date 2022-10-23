@@ -224,10 +224,6 @@ module xen::xen {
 
         // nothing to burn since we haven't minted this part yet
         // stake extra tokens part
-        assert!(staked_reward > XEN_MIN_STAKE, E_MIN_STAKE);
-        assert!(term * SECONDS_IN_DAY > MIN_TERM, E_MIN_TERM);
-        assert!(term * SECONDS_IN_DAY < MAX_TERM_END + 1, E_MAX_TERM);
-
         create_stake(account, staked_reward, term);
     }
 
@@ -241,9 +237,6 @@ module xen::xen {
     ) acquires Dashboard, XENCapbility, StakeInfo {
         let account_addr = address_of(account);
         assert!(coin::balance<XEN>(account_addr) >= amount, E_NOT_ENOUGH_BALANCE);
-        assert!(amount > XEN_MIN_STAKE, E_MIN_STAKE);
-        assert!(term * SECONDS_IN_DAY > MIN_TERM, E_MIN_TERM);
-        assert!(term * SECONDS_IN_DAY < MAX_TERM_END + 1, E_MAX_TERM);
 
         // burn staked XEN
         burn_internal(account, amount);
@@ -553,6 +546,11 @@ module xen::xen {
         account: &signer,
         amount: u64,
         term: u64) acquires Dashboard, StakeInfo {
+
+        assert!(amount > XEN_MIN_STAKE, E_MIN_STAKE);
+        assert!(term * SECONDS_IN_DAY > MIN_TERM, E_MIN_TERM);
+        assert!(term * SECONDS_IN_DAY < MAX_TERM_END + 1, E_MAX_TERM);
+
         if (!exists<StakeInfo>(address_of(account))) {
             move_to(account, StakeInfo{
                 term: term,
