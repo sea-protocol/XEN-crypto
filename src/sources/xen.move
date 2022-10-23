@@ -119,12 +119,10 @@ module xen::xen {
     const TERM_AMPLIFIER_THRESHOLD: u64 = 5000;
     const REWARD_AMPLIFIER_START:   u64 = 2000; // 3000;
     const REWARD_AMPLIFIER_END:     u64 = 100;  // 1
-    const MAX_REWARD_CLAIM:         u64 = 220*1000*40; // 
+    const MAX_REWARD_CLAIM:         u64 = 20*1100*30*1000; // 30 * 20 * 1100 * 1000
 
-    const ONE_BILLION: u64 = 1000000000;
     const TWO_BILLION: u64 = 2000000000;
-    const MAX_MINT_SUPPLY: u64 = 2100000000;
-    const MILLION: u64 = 1000000;
+    const MILLION:     u64 = 1000000;
 
     // Errors ====================================================
     const E_MIN_TERM:    u64 = 100;
@@ -160,7 +158,6 @@ module xen::xen {
         move_to(sender, XENCapbility<XEN> {
             burn_cap: burn_cap,
             mint_cap: mint_cap,
-            // freeze_cap: freeze_cap,
         });
         move_to(sender, Dashboard {
             genesis_ts: get_timestamp(),
@@ -192,14 +189,14 @@ module xen::xen {
         let term_sec = term * SECONDS_IN_DAY / TIME_RATIO;
         assert!(term_sec > MIN_TERM / TIME_RATIO, E_MIN_TERM);
         assert!(term_sec < calc_max_term() + 1, E_MAX_TERM);
-        let supply = xen_supply();
-        assert!(supply < MAX_MINT_SUPPLY * XEN_SCALE, E_MAX_SUPPLY);
-        // let post_1b = supply >= ONE_BILLION * XEN_SCALE;
 
         let dash = borrow_global_mut<Dashboard>(@xen);
+        let supply = dash.total_supply;
+        assert!(supply < TWO_BILLION * XEN_SCALE, E_MAX_SUPPLY);
         dash.active_minters = dash.active_minters + 1;
         dash.global_rank  = dash.global_rank + 1;
-        let delta_ts = get_timestamp() - dash.genesis_ts;
+        let now_ts = get_timestamp();
+        let delta_ts = now_ts - dash.genesis_ts;
         // event
         // event::emit_event<RankClaimEvent>(
         //     &mut dash.rank_claim_events,
@@ -208,7 +205,7 @@ module xen::xen {
         move_to(account, MintInfo{
             user: account_addr,
             term: term,
-            maturity_ts: get_timestamp() + term_sec,
+            maturity_ts: now_ts + term_sec,
             rank: dash.global_rank,
             amplifier: calculate_reward_amplifier(delta_ts, supply),
             eaa_rate: calculate_eaa_rate(),
@@ -233,7 +230,6 @@ module xen::xen {
             mi.maturity_ts,
             mi.amplifier,
             mi.eaa_rate,
-            // mi.post_1b,
         ) * XEN_SCALE;
 
         cleanup_user_mint(mi);
@@ -356,12 +352,6 @@ module xen::xen {
         si.amount = 0;
 
         mint_internal(account, account_addr, xen_reward);
-        // emit
-        // let dash = borrow_global_mut<Dashboard>(@xen);
-        // event::emit_event<WithdrawEvent>(
-        //     &mut dash.withdraw_events,
-        //     WithdrawEvent { user: account_addr, amount: si.amount, reward: xen_reward },
-        // );
     }
 
     /**
@@ -393,7 +383,6 @@ module xen::xen {
         amplifier: u64,
         term: u64,
         eaa: u64,
-        // post_1b: bool,
     ): u64 {
         let log128 = log2(rank_delta);
         // let reward128 = if (post_1b) {
@@ -410,14 +399,6 @@ module xen::xen {
 
     fun max(a: u64, b: u64): u64 {
         if (a < b) b else a
-    }
-
-    fun xen_supply(): u64 {
-        let supply = coin::supply<XEN>();
-        if (option::is_some(&supply)) {
-            return ((*option::borrow(&supply) & 0xffffffffffffffff) as u64)
-        };
-        0
     }
 
     // mint XEN to account
@@ -546,8 +527,9 @@ module xen::xen {
         let rank_delta = max(global_rank - c_rank, 2);
         let eaa = (1000 + eea_rate);
         let reward = get_gross_reward(rank_delta, amplifier, term, eaa);
-        if (reward > MAX_REWARD_CLAIM * XEN_SCALE) {
-            reward = MAX_REWARD_CLAIM * XEN_SCALE;
+        // 30 * 20 * 1100 * 1000
+        if (reward > MAX_REWARD_CLAIM) {
+            reward = MAX_REWARD_CLAIM;
         };
         // last 100 is decrease the ampl
         return (reward * (100 - penalty)) / 1000 / 100 / 100
@@ -583,6 +565,8 @@ module xen::xen {
 
     /**
      * @dev calculates Reward Amplifier
+     * delta_ts: now_ts - dash.genesis_ts
+     * supply: current total supply
      */
     fun calculate_reward_amplifier(
         delta_ts: u64,
@@ -622,14 +606,14 @@ module xen::xen {
      */
     fun calculate_apy(): u64 acquires Dashboard {
         let dash = borrow_global<Dashboard>(@xen);
-        cacl_apy_pure(get_timestamp(), dash.genesis_ts)
+        calc_apy_pure(get_timestamp(), dash.genesis_ts)
     }
 
-    fun cacl_apy_pure(
+    fun calc_apy_pure(
         now_ts: u64,
         genesis_ts: u64,
     ): u64 {
-        let decrease = (now_ts - genesis_ts) * 2 / (SECONDS_IN_DAY / TIME_RATIO * XEN_APY_DAYS_STEP);
+        let decrease = (now_ts - genesis_ts) / (SECONDS_IN_DAY / TIME_RATIO * XEN_APY_DAYS_STEP);
         if (XEN_APY_START - XEN_APY_END < decrease) XEN_APY_END else XEN_APY_START - decrease
     }
 
@@ -759,15 +743,15 @@ module xen::xen {
     fun test_cacl_apy_pure() {
         let now_ts = 102*60*9;
         let genesis_ts = 0;
-        debug::print(&cacl_apy_pure(now_ts, genesis_ts));
+        debug::print(&calc_apy_pure(now_ts, genesis_ts));
         now_ts = 101*60*9;
-        debug::print(&cacl_apy_pure(now_ts, genesis_ts));
+        debug::print(&calc_apy_pure(now_ts, genesis_ts));
         now_ts = 100*60*9;
-        debug::print(&cacl_apy_pure(now_ts, genesis_ts));
+        debug::print(&calc_apy_pure(now_ts, genesis_ts));
         now_ts = 99*60*9;
-        debug::print(&cacl_apy_pure(now_ts, genesis_ts));
+        debug::print(&calc_apy_pure(now_ts, genesis_ts));
         now_ts = 50*60*9;
-        debug::print(&cacl_apy_pure(now_ts, genesis_ts));
+        debug::print(&calc_apy_pure(now_ts, genesis_ts));
     }
 
     #[test]
@@ -781,8 +765,8 @@ module xen::xen {
         debug::print(&calculate_reward_amplifier(1/TIME_RATIO, 2100000000-1));
         debug::print(&calculate_reward_amplifier(1/TIME_RATIO, 2100000000));
         debug::print(&calculate_reward_amplifier(1/TIME_RATIO, 2100000001));
-        debug::print(&calculate_reward_amplifier(1/TIME_RATIO, 2200000000));
-        debug::print(&calculate_reward_amplifier(1/TIME_RATIO, 3200000000));
+        debug::print(&calculate_reward_amplifier(1/TIME_RATIO, 2200000000*XEN_SCALE));
+        debug::print(&calculate_reward_amplifier(1/TIME_RATIO, 3200000000*XEN_SCALE));
 
         debug::print(&calculate_reward_amplifier(1*SECONDS_IN_DAY, 1000000));
         debug::print(&calculate_reward_amplifier(2*SECONDS_IN_DAY, 1000000));
