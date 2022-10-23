@@ -81,6 +81,7 @@ module xen::xen {
         total_xen_staked: u64,
         // user address => XEN burn amount
         user_burns: Table<address, u64>,
+        total_supply: u64,
         // redeem_events: EventHandle<RedeemEvent>,
         // rank_claim_events: EventHandle<RankClaimEvent>,
         // mint_claim_events: EventHandle<MintClaimEvent>,
@@ -94,7 +95,7 @@ module xen::xen {
     }
 
     // Constants ====================================================
-    const TIME_RATIO:     u64 = 24;          // for test: 1 minute
+    const TIME_RATIO:     u64 = 1;          // for test: 60*24=1 minute; 6*24=10 min; 24=1 hour
     const SECONDS_IN_DAY: u64 = 3600 * 24;
     const DAYS_IN_YEAR:   u64 = 365;
     const GENESIS_RANK:   u64 = 1;
@@ -153,7 +154,7 @@ module xen::xen {
             string::utf8(b"XEN"),
             string::utf8(b"XEN"),
             4,
-            true,
+            false,
         );
         coin::destroy_freeze_cap<XEN>(freeze_cap);
         move_to(sender, XENCapbility<XEN> {
@@ -168,6 +169,7 @@ module xen::xen {
             active_stakes: 0,
             total_xen_staked: 0,
             user_burns: table::new<address, u64>(),
+            total_supply: 0,
             // redeem_events: account::new_event_handle<RedeemEvent>(sender),
             // rank_claim_events: account::new_event_handle<RankClaimEvent>(sender),
             // mint_claim_events: account::new_event_handle<MintClaimEvent>(sender),
@@ -236,9 +238,10 @@ module xen::xen {
 
         cleanup_user_mint(mi);
         // mint to user
+        let dash = borrow_global_mut<Dashboard>(@xen);
+        dash.total_supply = dash.total_supply + reward_amount/100 + reward_amount;
         mint_internal(account, account_addr, reward_amount);
         mint_addition(reward_amount/100)
-        // let dash = borrow_global_mut<Dashboard>(@xen);
         // event::emit_event<MintClaimEvent>(
         //     &mut dash.mint_claim_events,
         //     MintClaimEvent { user: account_addr, reward_amount: reward_amount },
@@ -272,6 +275,8 @@ module xen::xen {
         let own_reward = reward_amount - staked_reward;
         //
         // mint reward tokens part
+        let dash = borrow_global_mut<Dashboard>(@xen);
+        dash.total_supply = dash.total_supply + reward_amount/100 + own_reward;
         mint_internal(account, account_addr, own_reward);
         mint_addition(reward_amount/100);
         cleanup_user_mint(mi);
@@ -316,7 +321,10 @@ module xen::xen {
         create_stake(account, amount, term);
         // event
         // emit Staked(_msgSender(), amount, term);
-        // let dash = borrow_global_mut<Dashboard>(@xen);
+        let dash = borrow_global_mut<Dashboard>(@xen);
+        if (dash.total_supply > amount) {
+            dash.total_supply = dash.total_supply - amount;
+        }
         // event::emit_event<StakeEvent>(
         //     &mut dash.stake_events,
         //     StakeEvent { user: account_addr, amount: amount, term: term },
@@ -344,6 +352,7 @@ module xen::xen {
         let dash = borrow_global_mut<Dashboard>(@xen);
         dash.active_stakes = dash.active_stakes - 1;
         dash.total_xen_staked = dash.total_xen_staked - si.amount;
+        dash.total_supply = dash.total_supply + xen_reward;
         si.amount = 0;
 
         mint_internal(account, account_addr, xen_reward);
@@ -707,6 +716,7 @@ module xen::xen {
             active_stakes: 0,
             total_xen_staked: 0,
             user_burns: table::new<address, u64>(),
+            total_supply: 0,
             // redeem_events: account::new_event_handle<RedeemEvent>(sender),
             // rank_claim_events: account::new_event_handle<RankClaimEvent>(sender),
             // mint_claim_events: account::new_event_handle<MintClaimEvent>(sender),
@@ -754,7 +764,7 @@ module xen::xen {
         now_ts = 50*60*9;
         debug::print(&cacl_apy_pure(now_ts, genesis_ts));
     }
-    
+
     #[test]
     fun test_calculate_reward_amplifier() {
         debug::print(&calculate_reward_amplifier(1/TIME_RATIO, 1000));
@@ -768,6 +778,13 @@ module xen::xen {
         debug::print(&calculate_reward_amplifier(1/TIME_RATIO, 2100000001));
         debug::print(&calculate_reward_amplifier(1/TIME_RATIO, 2200000000));
         debug::print(&calculate_reward_amplifier(1/TIME_RATIO, 3200000000));
+
+        debug::print(&calculate_reward_amplifier(1*SECONDS_IN_DAY, 1000000));
+        debug::print(&calculate_reward_amplifier(2*SECONDS_IN_DAY, 1000000));
+        debug::print(&calculate_reward_amplifier(3*SECONDS_IN_DAY, 1000000));
+        debug::print(&calculate_reward_amplifier(10*SECONDS_IN_DAY, 1000000));
+        debug::print(&calculate_reward_amplifier(60*SECONDS_IN_DAY, 1000000));
+        debug::print(&calculate_reward_amplifier(100*SECONDS_IN_DAY, 1000000));
     }
 
     #[test]
