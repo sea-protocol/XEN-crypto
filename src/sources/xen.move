@@ -376,7 +376,12 @@ module xen::xen {
 
         burn_internal(account, amount);
         let dash = borrow_global_mut<Dashboard>(@xen);
-        table::add(&mut dash.user_burns, account_addr, amount);
+        if (table::contains(&dash.user_burns, account_addr)) {
+            let burned = *table::borrow(&dash.user_burns, account_addr);
+            table::upsert(&mut dash.user_burns, account_addr, burned + amount);
+        } else {
+            table::add(&mut dash.user_burns, account_addr, amount);
+        }
     }
 
     // Public Getter functions ====================================================
