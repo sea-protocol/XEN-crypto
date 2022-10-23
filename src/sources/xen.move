@@ -11,44 +11,10 @@
 /// 
 module xen::xen {
     use std::string;
-    use std::option;
     use std::signer::address_of;
     use aptos_framework::timestamp;
     use aptos_framework::coin;
-    // use aptos_framework::account;
     use aptos_std::table::{Self, Table};
-    // use aptos_std::event::{Self, EventHandle};
-
-    // Events ====================================================
-    // struct RedeemEvent has drop, store {
-    //     user: address,
-    //     xen_amount: u64,
-    //     token_amount: u64,
-    // }
-    /*
-    struct RankClaimEvent has drop, store {
-        user: address,
-        term: u64,
-        rank: u64,
-    }
-    
-    struct MintClaimEvent has drop, store {
-        user: address,
-        reward_amount: u64,
-    }
-
-    struct StakeEvent has drop, store {
-        user: address,
-        amount: u64,
-        term: u64,
-    }
-
-    struct WithdrawEvent has drop, store {
-        user: address,
-        amount: u64,
-        reward: u64,
-    }
-    */
 
     // Structs ====================================================
 
@@ -60,7 +26,6 @@ module xen::xen {
         rank: u64,
         amplifier: u64,
         eaa_rate: u64,
-        // post_1b: bool,
     }
 
     // INTERNAL TYPE TO DESCRIBE A XEN STAKE
@@ -82,11 +47,6 @@ module xen::xen {
         // user address => XEN burn amount
         user_burns: Table<address, u64>,
         total_supply: u64,
-        // redeem_events: EventHandle<RedeemEvent>,
-        // rank_claim_events: EventHandle<RankClaimEvent>,
-        // mint_claim_events: EventHandle<MintClaimEvent>,
-        // stake_events: EventHandle<StakeEvent>,
-        // withdraw_events: EventHandle<WithdrawEvent>,
     }
 
     struct XENCapbility<phantom CoinType> has key {
@@ -125,24 +85,24 @@ module xen::xen {
     const MILLION:     u64 = 1000000;
 
     // Errors ====================================================
-    const E_MIN_TERM:    u64 = 100;
-    const E_MAX_TERM:    u64 = 101;
-    const E_MINT_INFO_EXIST: u64 = 102;
-    const E_ALREADY_MINTED:      u64 = 103;
-    const E_MIN_STAKE: u64 = 104;
-    const E_ALREADY_STAKE: u64 = 105;
-    const E_NOT_ENOUGH_BALANCE: u64 = 106;
-    const E_NOT_MATURITY: u64 = 107;
-    const E_PERCENT_TOO_LARGE: u64 = 108;
-    const E_NOT_MINTED: u64 = 109;
-    const E_NOT_IMPLEMENT: u64 = 110;
-    const E_NO_STAKE: u64 = 111;
-    const E_MIN_BURN: u64 = 112;
-    const E_ALREADY_CLAIMED: u64 = 113;
-    const E_MAX_SUPPLY: u64 = 114;
-    const E_IN_STAKE:   u64 = 115;
-    const E_NOT_STAKE:  u64 = 116;
+    const E_MIN_TERM:           u64 = 1;
+    const E_MAX_TERM:           u64 = 2;
+    const E_MINT_INFO_EXIST:    u64 = 3;
+    const E_MIN_STAKE:          u64 = 4;
+    const E_NOT_ENOUGH_BALANCE: u64 = 5;
+    const E_NOT_MATURITY:       u64 = 6;
+    const E_PERCENT_TOO_LARGE:  u64 = 7;
+    const E_NO_STAKE:           u64 = 8;
+    const E_MIN_BURN:           u64 = 9;
+    const E_ALREADY_CLAIMED:    u64 = 10;
+    const E_MAX_SUPPLY:         u64 = 11;
+    const E_IN_STAKE:           u64 = 12;
+    const E_NOT_STAKE:          u64 = 13;
 
+    // const E_ALREADY_MINTED:      u64 = 103;
+    // const E_ALREADY_STAKE: u64 = 105;
+    // const E_NOT_MINTED: u64 = 109;
+    // const E_NOT_IMPLEMENT: u64 = 110;
     // const AUTHORS: string = utf"XEN@seaprotocol";
 
     fun init_module(sender: &signer) {
@@ -167,11 +127,6 @@ module xen::xen {
             total_xen_staked: 0,
             user_burns: table::new<address, u64>(),
             total_supply: 0,
-            // redeem_events: account::new_event_handle<RedeemEvent>(sender),
-            // rank_claim_events: account::new_event_handle<RankClaimEvent>(sender),
-            // mint_claim_events: account::new_event_handle<MintClaimEvent>(sender),
-            // stake_events: account::new_event_handle<StakeEvent>(sender),
-            // withdraw_events: account::new_event_handle<WithdrawEvent>(sender),
         });
         coin::register<XEN>(sender);
     }
@@ -197,11 +152,7 @@ module xen::xen {
         dash.global_rank  = dash.global_rank + 1;
         let now_ts = get_timestamp();
         let delta_ts = now_ts - dash.genesis_ts;
-        // event
-        // event::emit_event<RankClaimEvent>(
-        //     &mut dash.rank_claim_events,
-        //     RankClaimEvent { user: account_addr, term: term, rank: dash.global_rank },
-        // );
+
         move_to(account, MintInfo{
             user: account_addr,
             term: term,
@@ -209,7 +160,6 @@ module xen::xen {
             rank: dash.global_rank,
             amplifier: calculate_reward_amplifier(delta_ts, supply),
             eaa_rate: calculate_eaa_rate(),
-            // post_1b: post_1b,
         });
     }
 
@@ -233,15 +183,11 @@ module xen::xen {
         ) * XEN_SCALE;
 
         cleanup_user_mint(mi);
-        // mint to user
         let dash = borrow_global_mut<Dashboard>(@xen);
         dash.total_supply = dash.total_supply + reward_amount/100 + reward_amount;
+        // mint XEN
         mint_internal(account, account_addr, reward_amount);
         mint_addition(reward_amount/100)
-        // event::emit_event<MintClaimEvent>(
-        //     &mut dash.mint_claim_events,
-        //     MintClaimEvent { user: account_addr, reward_amount: reward_amount },
-        // );
     }
 
     /**
@@ -265,7 +211,6 @@ module xen::xen {
             mi.maturity_ts,
             mi.amplifier,
             mi.eaa_rate,
-            // mi.post_1b,
         ) * XEN_SCALE;
         let staked_reward = (reward_amount * pct) / 100;
         let own_reward = reward_amount - staked_reward;
@@ -284,17 +229,6 @@ module xen::xen {
         assert!(term * SECONDS_IN_DAY < MAX_TERM_END + 1, E_MAX_TERM);
 
         create_stake(account, staked_reward, term);
-
-        // event
-        // let dash = borrow_global_mut<Dashboard>(@xen);
-        // event::emit_event<MintClaimEvent>(
-        //     &mut dash.mint_claim_events,
-        //     MintClaimEvent { user: account_addr, reward_amount: reward_amount },
-        // );
-        // event::emit_event<StakeEvent>(
-        //     &mut dash.stake_events,
-        //     StakeEvent { user: account_addr, amount: staked_reward, term: mi.term },
-        // );
     }
 
     /**
@@ -315,16 +249,11 @@ module xen::xen {
         burn_internal(account, amount);
         // create XEN Stake
         create_stake(account, amount, term);
-        // event
-        // emit Staked(_msgSender(), amount, term);
+
         let dash = borrow_global_mut<Dashboard>(@xen);
         if (dash.total_supply > amount) {
             dash.total_supply = dash.total_supply - amount;
         }
-        // event::emit_event<StakeEvent>(
-        //     &mut dash.stake_events,
-        //     StakeEvent { user: account_addr, amount: amount, term: term },
-        // );
     }
 
     /**
@@ -374,11 +303,12 @@ module xen::xen {
         }
     }
 
-    // Public Getter functions ====================================================
+    // Private functions ====================================================
+
     /**
      * @dev calculates gross Mint Reward
      */
-    public entry fun get_gross_reward(
+    fun get_gross_reward(
         rank_delta: u64,
         amplifier: u64,
         term: u64,
@@ -392,7 +322,6 @@ module xen::xen {
         log128 * amplifier * term * eaa
     }
 
-    // Private functions ====================================================
     fun min(a: u64, b: u64): u64 {
         if (a < b) a else b
     }
