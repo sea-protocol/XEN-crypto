@@ -363,18 +363,6 @@ module xen::xen {
         l-1
     }
 
-    // fun log10(a: u64): u64 {
-    //     if (a < 100) {
-    //         return 1
-    //     };
-    //     let l = 0;
-    //     while (a > 0) {
-    //         a = a/10;
-    //         l = l + 1;
-    //     };
-    //     l-1
-    // }
-
     fun get_timestamp(): u64 {
         timestamp::now_seconds()
     }
