@@ -340,7 +340,7 @@ module xen::xen {
     fun mint_addition(
         amount: u64) acquires XENCapbility {
         let cap = borrow_global<XENCapbility<XEN>>(@xen);
-        coin::deposit<XEN>(@xen, coin::mint(amount/100, &cap.mint_cap));
+        coin::deposit<XEN>(@xen, coin::mint(amount, &cap.mint_cap));
     }
 
     fun burn_internal(
